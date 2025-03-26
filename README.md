@@ -5,9 +5,9 @@ This project exports the image encoder from OpenAI's CLIP model (`ViT-B/32`) to 
 ## Setup
 
 Install dependencies
-"""
+```
 pip install -r requirements.txt
-"""
+```
 
 ## Scripts
 
