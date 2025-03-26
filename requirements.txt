@@ -1,0 +1,8 @@
+torch
+transformers
+onnx
+onnxruntime
+numpy
+opencv-python
+Pillow
+scipy
