@@ -4,6 +4,8 @@ import onnxruntime as ort
 from transformers import CLIPModel, CLIPProcessor
 from PIL import Image
 from scipy.spatial.distance import cosine
+import json
+import cv2
 
 """
 Script to compare image embeddings from a PyTorch CLIP model and its exported ONNX version.
@@ -17,7 +19,7 @@ Script to compare image embeddings from a PyTorch CLIP model and its exported ON
 # --- Config ---
 clip_model_id = "openai/clip-vit-base-patch32"
 onnx_path = "models/clip_image_encoder.onnx"
-image_path = "cat.jpg"
+image_path = "cat.png"
 # ---------------
 
 # === Load PyTorch CLIP Model & Processor ===
@@ -39,51 +41,61 @@ class CLIPImageEncoder(torch.nn.Module):
 
 pt_encoder = CLIPImageEncoder(model)
 
-# === Preprocess image for PyTorch (CLIPProcessor) ===
-image = Image.open(image_path).convert("RGB")
-pt_inputs = processor(images=image, return_tensors="pt")
-pt_pixel_values = pt_inputs["pixel_values"]
+
+def load_image_opencv(image_path, input_size=224):
+    """
+    Loads an image and preprocesses it for CLIP using OpenCV-style blob processing.
+
+    Args:
+        image_path (str): Path to the image file.
+        input_size (int): Size to which the image will be resized (usually 224 or 336).
+
+    Returns:
+        np.ndarray: Preprocessed image blob (1x3xHxW) ready for CLIP.
+    """
+    # CLIP mean and std (RGB)
+    mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255]
+    std = [0.26862954, 0.26130258, 0.27577711]
+
+    # Load and resize image
+    frame = cv2.imread(image_path)  # BGR by default
+    if frame is None:
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    frame = cv2.resize(frame, (input_size, input_size))
+
+    # Convert image to blob with mean subtraction (BGR order)
+    mean_bgr = mean[::-1]
+    blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0 / 255.0,
+                                 size=(input_size, input_size),
+                                 mean=mean_bgr, swapRB=True, crop=False)
+
+    # # Normalize by std (still in BGR order)
+    # std_bgr = std[::-1]
+    # for c in range(3):
+    #     blob[0, c, :, :] /= std_bgr[c]
+
+    return blob
+
+
+image_blob = load_image_opencv(image_path)
+pt_pixel_values = torch.from_numpy(image_blob).float()
 
 # === PyTorch Inference ===
 with torch.no_grad():
     pt_output = pt_encoder(pt_pixel_values).cpu().numpy()
 
-# === ONNX Preprocessing ===
-def preprocess_for_onnx(image_path):
-    img = Image.open(image_path).convert("RGB")
-    img = resize_with_aspect_ratio(img, 224)
-    img = center_crop(img, (224, 224))
-    img = np.array(img).astype(np.float32) / 255.0
-    mean = np.array([0.48145466, 0.4578275, 0.40821073])
-    std = np.array([0.26862954, 0.26130258, 0.27577711])
-    img = (img - mean) / std
-    img = np.transpose(img, (2, 0, 1))
-    img = np.expand_dims(img, axis=0)
-    return img.astype(np.float32)
-
-def resize_with_aspect_ratio(image, target_size):
-    width, height = image.size
-    short_side = min(width, height)
-    scale = target_size / short_side
-    new_width = round(width * scale)
-    new_height = round(height * scale)
-    return image.resize((new_width, new_height), Image.BICUBIC)
-
-def center_crop(image, crop_size):
-    width, height = image.size
-    crop_width, crop_height = crop_size
-    left = round((width - crop_width) / 2)
-    top = round((height - crop_height) / 2)
-    return image.crop((left, top, left + crop_width, top + crop_height))
-
-
-onnx_input = preprocess_for_onnx(image_path)
-
 # === ONNX Inference ===
 session = ort.InferenceSession(onnx_path)
 input_name = session.get_inputs()[0].name
 output_name = session.get_outputs()[0].name
-onnx_output = session.run([output_name], {input_name: onnx_input})[0]
+onnx_output = session.run([output_name], {input_name: image_blob})[0]
+
+
+with open('cat_emb_pt.json', 'w') as f:
+    json.dump(pt_output.tolist(), f)
+
+with open('cat_emb_onnx.json', 'w') as f:
+    json.dump(onnx_output.tolist(), f)
 
 def l2_normalize(x):
     return x / np.linalg.norm(x, axis=1, keepdims=True)

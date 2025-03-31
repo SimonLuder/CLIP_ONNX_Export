@@ -1,6 +1,7 @@
 import onnxruntime as ort
 import numpy as np
 import cv2
+import json
 
 """
 Script to run inference on an exported CLIP image encoder ONNX model using OpenCV and ONNX Runtime.
@@ -10,46 +11,48 @@ Script to run inference on an exported CLIP image encoder ONNX model using OpenC
 3. Runs the model to generate image embeddings.
 """
 
-def clip_preprocess_opencv(image_path):
+    
+def load_image_opencv(image_path, input_size=224):
     """
-    Simulates CLIPProcessor image pipeline using OpenCV.
-    Output: float32 tensor, shape (1, 3, 224, 224)
+    Loads an image and preprocesses it for CLIP using OpenCV-style blob processing.
+
+    Args:
+        image_path (str): Path to the image file.
+        input_size (int): Size to which the image will be resized (usually 224 or 336).
+
+    Returns:
+        np.ndarray: Preprocessed image blob (1x3xHxW) ready for CLIP.
     """
-    # Load and convert to RGB
-    img = cv2.imread(image_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # CLIP mean and std (RGB)
+    mean = [0.48145466 * 255, 0.4578275 * 255, 0.40821073 * 255]
+    std = [0.26862954, 0.26130258, 0.27577711]
 
-    # Resize shortest side to 224
-    h, w = img.shape[:2]
-    scale = 224 / min(h, w)
-    new_w = int(round(w * scale))
-    new_h = int(round(h * scale))
-    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+    # Load and resize image
+    frame = cv2.imread(image_path)  # BGR
+    if frame is None:
+        raise FileNotFoundError(f"Image not found: {image_path}")
+    frame = cv2.resize(frame, (input_size, input_size))
 
-    # Center crop
-    start_x = (new_w - 224) // 2
-    start_y = (new_h - 224) // 2
-    img = img[start_y:start_y+224, start_x:start_x+224]
+    # Convert image to blob with mean subtraction (BGR)
+    mean_bgr = mean[::-1]
+    blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0 / 255.0,
+                                 size=(input_size, input_size),
+                                 mean=mean_bgr, swapRB=True, crop=False)
 
-    # Normalize to [0,1]
-    img = img.astype(np.float32) / 255.0
+    # # Normalize by std (BGR)
+    # std_bgr = std[::-1]
+    # for c in range(3):
+    #     blob[0, c, :, :] /= std_bgr[c]
 
-    # Normalize with CLIP mean/std
-    mean = np.array([0.48145466, 0.4578275, 0.40821073])
-    std = np.array([0.26862954, 0.26130258, 0.27577711])
-    img = (img - mean) / std
+    return blob
 
-    # Convert to CHW and add batch dimension
-    img = np.transpose(img, (2, 0, 1))   # HWC → CHW
-    img = np.expand_dims(img, axis=0)    # Add batch dim
-    return img.astype(np.float32)
 
 
 # Load ONNX model
 session = ort.InferenceSession("models/clip_image_encoder.onnx")
 
 # Preprocess image
-input_tensor = clip_preprocess_opencv("cat.jpg")
+input_tensor = load_image_opencv("cat.png")
 
 # Get input/output layers
 input_layer_name = session.get_inputs()[0].name
@@ -61,3 +64,6 @@ embedding = outputs[0]
 
 print("Input shape:", input_tensor.shape)
 print("Output shape", embedding.shape)
+
+with open('inference_emb_onnx.json', 'w') as f:
+    json.dump(embedding.tolist(), f)
