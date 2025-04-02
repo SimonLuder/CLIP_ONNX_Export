@@ -34,18 +34,15 @@ def load_image_opencv(image_path, input_size=224):
     frame = cv2.resize(frame, (input_size, input_size))
 
     # Convert image to blob with mean subtraction (BGR)
-    mean_bgr = mean[::-1]
     blob = cv2.dnn.blobFromImage(frame, scalefactor=1.0 / 255.0,
                                  size=(input_size, input_size),
-                                 mean=mean_bgr, swapRB=True, crop=False)
+                                 mean=mean, swapRB=True, crop=False)
 
-    # # Normalize by std (BGR)
-    # std_bgr = std[::-1]
+    # # Normalize by std
     # for c in range(3):
-    #     blob[0, c, :, :] /= std_bgr[c]
+    #     blob[0, c, :, :] /= std[c]
 
     return blob
-
 
 
 # Load ONNX model
